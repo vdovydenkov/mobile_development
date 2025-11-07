@@ -29,6 +29,8 @@
   *«Счётчик сброшен»*.
 
 Приложение использует компонент `Scaffold` с `AppBar`, `Column` для выравнивания элементов и `FloatingActionButton` для кнопок управления.
+Основной код приложения:
+incrementator/lib/main.dart
 
 ---
 
