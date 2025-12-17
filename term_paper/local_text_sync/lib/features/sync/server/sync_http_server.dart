@@ -13,146 +13,121 @@ class SyncServer {
 
   final StreamController<ServerData> _controller;
   final HttpServer _server;
+  final Set<WebSocket> clients;
 
   SyncServer._(
     this._server,
     this._controller,
     this.address,
+    this.clients,
   ) : stream = _controller.stream;
 
+  /// Останавливаем сервер и закрываем все подключения
   Future<void> stop() async {
+    for (final c in clients) {
+      await c.close();
+    }
     await _server.close(force: true);
     await _controller.close();
   }
-} 
+}
 
-/// Запускает локальный HTTP-сервер
-/// Возвращает `Stream<ServerData>` с данными для синхронизации
+/// Запускает локальный сервер с WebSocket
 Future<SyncServer> startServer({
-  // Параметры
-  // Путь к HTML-шаблону
-  String  htmlTemplatePath = '',
-  // Порт по умолчанию
-  int     port             = 8080,
-  // Внешний логгер, необязательно
+  String htmlTemplatePath = '',
+  int port = 8080,
   Logger? externalLogger,
 }) async {
-  // Сюда собираем лог
   final log = StringBuffer();
-
-  // Берём адрес
   final host = InternetAddress.anyIPv4;
 
   log.writeln('host: $host');
 
-  final List<NetworkInterface> interfaces =
-    await NetworkInterface.list(
-      type: InternetAddressType.IPv4
-    );
-
+  final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4);
   log.writeln('--- Interfaces');
-  for (final interface in interfaces) {
-    log.writeln('Interface: ${interface.name}');
-    for (final address in interface.addresses) {
-      log.writeln('  Address: ${address.address} (тип: ${address.type})');
+  for (final iface in interfaces) {
+    log.writeln('Interface: ${iface.name}');
+    for (final addr in iface.addresses) {
+      log.writeln('  Address: ${addr.address} (тип: ${addr.type})');
     }
   }
   log.writeln('---');
-  
-  final localIp = _chooseRealLocalIp(interfaces, log) ?? '0.0.0.0';
 
+  final localIp = _chooseRealLocalIp(interfaces, log) ?? '0.0.0.0';
   log.writeln('localIp: $localIp');
 
-
-  // Читаем HTML-шаблон
+  // HTML-шаблон
   String htmlTemplate;
-
-  log.writeln('Try to load html template from: $htmlTemplatePath');
-
   try {
     htmlTemplate = await rootBundle.loadString(htmlTemplatePath);
   } catch (e) {
-    log.writeln('Template loading error: $e');
-    // Берем значение по умолчанию
     htmlTemplate = defaultFailSafeHtmlTemplate;
-    log.writeln('Use a fail safe template from config.');
+    externalLogger?.w('Use fail safe template: $e');
   }
 
-  log.writeln('Raw html template length: ${htmlTemplate.length}');
-
-  // Формируем страницу с подстановкой адреса и порта
   final html = htmlTemplate
       .replaceAll('{{HOST}}', localIp)
       .replaceAll('{{PORT}}', port.toString());
-  log.writeln('html length: ${html.length}');
-  
-  // Собрали отладочный лог, выводим, если передали логгер
+
   externalLogger?.d(log.toString());
-  
-  // Контроллер для команд
+
   final controller = StreamController<ServerData>.broadcast();
-
-  // Запускаем сервер
   final server = await HttpServer.bind(host, port);
+  final clients = <WebSocket>{};
+  final address = 'http://$localIp:$port (ws://$localIp:$port/ws)';
+  externalLogger?.i('Server running on $address');
 
-  final address = 'http://$localIp:$port';
-  externalLogger?.i('The app local server running on $address');
-
-  // Обработка запросов
   server.listen((HttpRequest req) async {
     try {
+      // WebSocket endpoint
+      if (req.uri.path == '/ws' && WebSocketTransformer.isUpgradeRequest(req)) {
+        final socket = await WebSocketTransformer.upgrade(req);
+        clients.add(socket);
+        externalLogger?.i('WebSocket client connected');
+
+        socket.listen(
+          (message) {
+            final data = json.decode(message);
+            final serverData = ServerData()..text = data['text'] ?? '';
+            final dataLength = serverData.text.length;
+
+            // Если данные не удалось преобразовать в текст - логируем исходный объект.
+            // Если удалось - логируем только размер текста.
+            externalLogger?.d(
+              'WS received '
+              '${serverData.text.isEmpty ? data.toString() : dataLength}'
+            );
+            
+            // Отправляем в поток приложения
+            controller.add(serverData);
+
+            // Рассылаем всем подключенным клиентам
+            final payload = json.encode({'type': 'sync', 'text': serverData.text});
+            for (final c in clients) {
+              c.add(payload);
+            }
+          },
+          onDone: () {
+            clients.remove(socket);
+            externalLogger?.i('WebSocket client disconnected');
+          },
+          onError: (e) {
+            clients.remove(socket);
+            externalLogger?.w('WebSocket error: $e');
+          },
+        );
+
+        return;
+      }
+
+      // HTTP GET: отдаём HTML
       if (req.method == 'GET') {
-        // Отдаём страницу
         req.response
           ..headers.contentType = ContentType.html
           ..write(html);
-      } else if (req.method == 'POST' && req.uri.path == '/content') {
-        // Может прийти в json или x-www-form-urlencoded
-        final contentType = req.headers.contentType?.mimeType;
-        final body = await utf8.decoder.bind(req).join();
-
-        externalLogger?.d(
-          'Server request:\n'
-          '  contenttype: $contentType\n'
-          '  Body: $body'
-        );
-        
-        final serverData = ServerData();
-
-        if (contentType == 'application/json') {
-          final data = json.decode(body);
-
-          externalLogger?.d(
-            'application/json detected.'
-            'data: ${data.toString()}'
-          );
-
-          serverData.text = data['syncText'] ?? data.toString();
-        } else if (contentType == 'application/x-www-form-urlencoded') {
-          final data = Uri.splitQueryString(body);
-          serverData.text = data['content'] ?? data.toString();
-
-          externalLogger?.d(
-            'application/x-www-form-urlencoded detected.\n'
-            'serverData.text: ${serverData.text}'
-          );
-        } else {
-          req.response.statusCode = HttpStatus.unsupportedMediaType;
-          externalLogger?.w('Server request contains a Unsupported Media Type: $contentType');
-          return;
-        }
-
-        // Добавляем данные в поток
-        controller.add(serverData);
-
-        // Возвращаем подтверждение
-        req.response
-          ..headers.contentType = ContentType.text
-          ..write('Synchronized.');
-        externalLogger?.d('Response: OK.');
       } else {
         req.response.statusCode = HttpStatus.notFound;
-        externalLogger?.w('Server request contains unsupported HTTP method.');
+        externalLogger?.w('Unsupported HTTP method: ${req.method}');
       }
     } catch (e, st) {
       req.response.statusCode = HttpStatus.internalServerError;
@@ -163,19 +138,15 @@ Future<SyncServer> startServer({
     }
   });
 
-  return SyncServer._(
-    server,
-    controller,
-    address,
-  );
+  return SyncServer._(server, controller, address, clients);
 }
 
+/// Выбираем реальный локальный IP (не loopback, не виртуальные)
 String? _chooseRealLocalIp(List<NetworkInterface> interfaces, StringBuffer log) {
   for (final iface in interfaces) {
     final name = iface.name.toLowerCase();
-
     log.writeln('Looking at interface $name');
-    // Отсекаем виртуальные, VPN, Docker, WSL
+
     if (name.contains('virtual') ||
         name.contains('vm') ||
         name.contains('docker') ||
@@ -184,30 +155,22 @@ String? _chooseRealLocalIp(List<NetworkInterface> interfaces, StringBuffer log) 
         name.contains('wg') ||
         name.contains('tap') ||
         name.contains('vbox') ||
-        name.contains('wsl'))
-    {
+        name.contains('wsl')) {
       log.writeln('Interface Rejected.');
       continue;
     }
 
-    // Оставляем "правильные" адаптеры
     if (name.contains('wi-fi') ||
         name.contains('беспроводная сеть') ||
         name.contains('wifi') ||
         name.contains('wlan') ||
         name.contains('ethernet') ||
-        name.contains('eth')) 
-    {
+        name.contains('eth')) {
       log.writeln('Interface accepted.');
       final ip = iface.addresses.first.address;
-      if (!ip.startsWith('127.')) {
-        return ip;
-      }
+      if (!ip.startsWith('127.')) return ip;
     }
   }
   log.writeln('No interface choosed.');
   return null;
 }
-
-
-
