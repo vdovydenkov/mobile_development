@@ -1,0 +1,114 @@
+﻿<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Local Text Sync</title>
+  <style>
+    html,body { height:100%; margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; background:#f7f7f7; color:#111; }
+    .wrap { max-width:720px; margin:6vh auto; padding:20px; background:#fff; border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.08); }
+    h1 { margin:0 0 12px 0; font-size:18px; font-weight:600; }
+    .row { display:flex; gap:8px; align-items:flex-start; }
+    input.text { flex:1; font-family:monospace; font-size:15px; padding:10px 12px; border:1px solid #ddd; border-radius:6px; box-sizing:border-box; }
+    button.send { padding:10px 14px; border-radius:6px; border:0; background:#0b79d0; color:#fff; font-weight:600; cursor:pointer; }
+    button.send:active { transform:translateY(1px); }
+    .response { margin-top:12px; padding:12px; background:#f1f5f9; border-radius:6px; min-height:64px; white-space:pre-wrap; font-family:monospace; font-size:13px; border:1px solid #e3e8ef; }
+    .hint { margin-top:8px; color:#666; font-size:13px; }
+    form { margin:0; }
+  </style>
+</head>
+<body>
+  <div class="wrap" role="main" aria-labelledby="title">
+    <h1 id="title">Local Text Sync</h1>
+
+    <!--
+      Подставьте адрес и порт вместо {{HOST}} и {{PORT}}.
+      По умолчанию JS отправляет POST на http://{{HOST}}:{{PORT}}/content
+      Можно заменить путь в переменной endpointPath ниже.
+    -->
+
+    <form id="ctrlForm" onsubmit="return sendText();">
+      <div class="row">
+        <input id="textInput" class="text" type="text" name="textSync" autocomplete="off"
+               placeholder="" aria-label="Текст для синхронизации" />
+        <button type="submit" class="send" id="sendBtn">Отправить (Enter)</button>
+      </div>
+    </form>
+
+    <div class="hint">Ответ сервера отображается ниже.</div>
+    <div id="response" class="response" aria-live="polite"></div>
+  </div>
+
+  <script>
+    (function () {
+      // Параметры эндпоинта — приложение должно заменить плейсхолдеры
+      const host = '{{HOST}}'; // замените на хост
+      const port = '{{PORT}}'; // замените на порт (например 8080)
+      const endpointPath = '/content'; // при необходимости измените путь
+      const endpoint = () => {
+        // Если host или port не подставлены, пытаемся использовать относительный URL
+        if (!host || host.includes('{{')) return endpointRelative();
+        return 'http://' + host + (port ? ':' + port : '') + endpointPath;
+      };
+      const endpointRelative = () => endpointPath; // fallback для встроенного сервера
+
+      // Elements
+      const input = document.getElementById('textInput');
+      const resp = document.getElementById('response');
+      const sendBtn = document.getElementById('sendBtn');
+
+      // Отправка команды через fetch (POST, json). Форма не перезагружает страницу.
+      window.sendText = async function sendText() {
+        const syncText = input.value;
+        if (!syncText) {
+          resp.textContent = 'Пустой текст.';
+          return false; // prevent form submit
+        }
+
+        sendBtn.disabled = true;
+        resp.textContent = 'Отправка...';
+
+        try {
+          const res = await fetch(endpoint(), {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requested-With': 'SyncText-Control'
+            },
+            body: JSON.stringify({ syncText })
+          });
+
+          const contentType = res.headers.get('content-type') || '';
+          let text;
+          if (contentType.includes('application/json')) {
+            const json = await res.json();
+            text = typeof json === 'string' ? json : JSON.stringify(json, null, 2);
+          } else {
+            text = await res.text();
+          }
+
+          resp.textContent = `HTTP ${res.status} ${res.statusText}\n\n` + text;
+        } catch (err) {
+          resp.textContent = 'Ошибка соединения: ' + (err && err.message ? err.message : String(err));
+        } finally {
+          sendBtn.disabled = false;
+          input.focus();
+        }
+
+        return false; // prevent default form submit
+      };
+
+      // Отправлять по Ctrl+Enter тоже (если нужно)
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendText();
+        }
+      });
+
+      // Автофокус и альтернативный placeholder под мобильные клавиатуры
+      input.focus();
+    })();
+  </script>
+</body>
+</html>
