@@ -36,10 +36,27 @@ class _SyncScreenState extends State<SyncScreen> {
         ),
       ),
 
-      floatingActionButton: FloatingActionButton(
-        onPressed: context.read<SyncService>().pasteFromClipboard,
-        tooltip: 'Paste',
-        child: const Icon(Icons.add),
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.all(8.0),  // Отступы от краёв экрана
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,  // Слева и справа
+          children: [
+            // Кнопка слева: отправляем текст веб-клиентам
+            FloatingActionButton(
+              heroTag: "leftFab",  // Уникальный tag
+              onPressed: context.read<SyncService>().sendToClients,
+              tooltip: 'Send',
+              child: const Icon(Icons.content_copy),
+            ),
+            // Основная кнопка справа (Paste)
+            FloatingActionButton(
+              heroTag: "rightFab",  // Уникальный tag
+              onPressed: context.read<SyncService>().pasteFromClipboard,
+              tooltip: 'Paste',
+              child: const Icon(Icons.add),
+            ),
+          ],
+        ),
       ),
 
       // Статусная строка
