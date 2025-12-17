@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:local_text_sync/features/sync/server/sync_http_server.dart';
 import 'package:local_text_sync/features/sync/models/server_data_model.dart';
@@ -34,6 +35,9 @@ class SyncService {
   // Слушателя буфера обмена активируем в конструкторе
   late StreamSubscription<String> _clipbSubscription;
 
+  // Сюда кладем самый последний текст
+  String _latestText = '';
+  
   // Показываем статус сервера наружу
   bool get isServerRunning => _server != null;
   // Показываем адрес
@@ -84,20 +88,43 @@ class SyncService {
     _emit(_address, DataSource.serverInfo);
   }
 
+  /// Рассылка текста по всем подключенным websocket-клиентам
+  void _sendToWebClients(String payload) {
+    // Приземляем _server, чтобы сделать non-nullable
+    final server = _server;
+    if (server == null) return;
+
+    final jsontemplate = json.encode({
+      'type': 'server-text',
+      'text': payload
+    });
+
+    // Рассылаем по веб-клиентам
+    for (final client in server.clients) {
+      client.add(jsontemplate);
+    }
+  }
+
   // Сюда приходят данные из потока буфера обмена
   void _onClipboard(String textFromClipboard) {
+    _latestText = textFromClipboard;
     _emit(textFromClipboard, DataSource.clipboard);
   }
 
   // Сюда приходят данные из серверного потока
   void _onServer(ServerData dataFromServer) {
     _log.d('_onServer: Data from server: ${dataFromServer.text}');
+    _latestText = dataFromServer.text;
     _emit(dataFromServer.text, DataSource.server);
   }
 
-  // Для UI
+  // ------- Для UI
   Future<void> pasteFromClipboard() async {
     await _clipb.pasteText();
+  }
+
+  Future<void> sendToClients() async {
+    _sendToWebClients(_latestText);
   }
 
   void _emit(String text, DataSource source) {
