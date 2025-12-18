@@ -1,8 +1,9 @@
 enum DataSource {
-  empty,
-  server,
-  clipboard,
-  serverInfo,
+  // Источник данных
+  empty,       // Пусто, ничего не делаем
+  server,      // Что-то прислал сервер
+  statusInfo,  // Информация для статусной строки
+  queue,       // Изменилась очередь текстов
 }
 
 class SyncData {
