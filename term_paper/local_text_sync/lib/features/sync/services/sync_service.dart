@@ -7,7 +7,6 @@ import 'package:local_text_sync/features/sync/models/server_data_model.dart';
 import 'package:local_text_sync/features/sync/models/sync_data_model.dart';
 import 'package:local_text_sync/config/configurator.dart';
 import 'package:local_text_sync/core/logging/logging_service.dart';
-import 'package:local_text_sync/features/sync/services/clipboard_service.dart';
 
 class SyncService {
   // --- Внешние свойства
@@ -21,27 +20,16 @@ class SyncService {
   String get address => _address;
 
   // --- Геттеры очереди текстов сервера
-  // Размер очереди (сколько там текстов)
+  // Размер очереди (сколько в ней текстов)
   int get queueLength => _queueText.length;
-  // Возвращает первый текст и удаляет его из очереди
-  String? get consumeServerText {
-    if (_queueText.isNotEmpty) {
-      return _queueText.removeFirst();
-    } else {
-      return null;
-    }
-  }
+
+  // --- Внутренние свойства
 
   // --- Параметры конструктора
   // Храним конфигурацию, переданную в параметре конструктора
   final Config _cfg;
   // Сервис логгера — тоже передали в параметре конструктора
   final LoggingService _log;
-
-  // --- Внутренние свойства
-
-  // Сервис буфер обмена
-  final _clipb = ClipboardService();
 
   // --- Серверный API
   // Сервер может не запуститься, поэтому nullable
@@ -58,19 +46,16 @@ class SyncService {
   // Слушатель буфера обмена активируем в конструкторе, поэтому late
   late StreamSubscription<String> _clipbSubscription;
 
-  // Сюда кладем самый последний текст
-  String _latestText = '';
   // В очередь собираем все тексты от сервера — отдаем по запросу
   final _queueText = Queue<String>();
   
   // Конструктор
   // Параметром передаем конфиг и логгер
   SyncService(this._cfg, this._log) {
-    _clipbSubscription = _clipb.stream.listen(_onClipboard);
     LoggingService.prefix = 'SyncService';
   }
   
-  // Асинхронно запускаем сервер
+  /// Асинхронно запускаем сервер
   Future<void> init() async {
     if (_server != null) {
       return;
@@ -109,15 +94,23 @@ class SyncService {
   }
 
   // --- Для UI
-  Future<void> pasteFromClipboard() async {
-    await _clipb.pasteText();
+  // Нажали "Отправить" - рассылаем текст по веб-клиентам
+  void onSendPressed(String text) {
+    _sendToWeb(text);
   }
 
-  Future<void> sendToWeb() async {
-    _sendToWebClients(_latestText);
+  // Нажали "Принять" - отдаем в поток текст из очереди, если есть
+  void onRetrievePressed() {
+    if (_queueText.isEmpty) return;
+
+    // Отправляем в поток и удаляем текст из очереди
+    _emit(
+      _queueText.removeFirst(),
+      DataSource.server,
+    );
   }
 
-  // Останавливаем поток, сервис буфера обмена и сервер
+  /// Останавливаем поток и сервер
   Future<void> dispose() async {
     await _clipbSubscription.cancel();
     await _serverSubscription?.cancel();
@@ -130,18 +123,17 @@ class SyncService {
     }
 
     await _controller.close();
-    _clipb.dispose();
   }
 
-  /// Рассылка текста по всем подключенным websocket-клиентам
-  void _sendToWebClients(String payload) {
+  // Рассылка текста по всем подключенным websocket-клиентам
+  void _sendToWeb(String text) {
     // Приземляем _server, чтобы сделать non-nullable
     final server = _server;
     if (server == null) return;
 
     final jsontemplate = json.encode({
-      'type': 'server-text',
-      'text': payload
+      'type': 'app-text',
+      'text': text
     });
 
     // Рассылаем по веб-клиентам
@@ -150,18 +142,10 @@ class SyncService {
     }
   }
 
-  // Сюда приходят данные из потока буфера обмена
-  void _onClipboard(String textFromClipboard) {
-    _latestText = textFromClipboard;
-    _emit(textFromClipboard, DataSource.clipboard);
-  }
-
   // Сюда приходят данные из серверного потока
   void _onServer(ServerData dataFromServer) {
     _log.d('_onServer: Data from server: ${dataFromServer.text.length} bytes.');
     _queueText.add(dataFromServer.text);
-    _latestText = dataFromServer.text;
-    _emit(dataFromServer.text, DataSource.server);
   }
 
   void _emit(String text, DataSource source) {
