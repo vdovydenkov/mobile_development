@@ -95,9 +95,22 @@ class _SyncScreenState extends State<SyncScreen> {
                   const SizedBox(height: 6),
                   SizedBox(
                     width: double.infinity,
-                    child: OutlinedButton(
-                      onPressed: syncService.onRetrievePressed,
-                      child: const Text('Принять'),
+                    child: Consumer<SyncState>(
+                      builder: (context, state, _) {
+                        final queueInfo = state.queueInfo;
+                        final isEnabled = queueInfo.isNotEmpty;
+
+                        return OutlinedButton(
+                          onPressed: isEnabled
+                              ? syncService.onRetrievePressed
+                              : null,
+                          child: Text(
+                            isEnabled
+                                ? 'Принять ($queueInfo)'
+                                : 'Принять',
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ],
@@ -120,7 +133,7 @@ class _SyncScreenState extends State<SyncScreen> {
               style: const TextStyle(fontSize: 14),
             ),
             Text(
-              context.watch<SyncState>().serverInfo,
+              context.watch<SyncState>().statusInfo,
               style: const TextStyle(fontSize: 14),
             ),
           ],
