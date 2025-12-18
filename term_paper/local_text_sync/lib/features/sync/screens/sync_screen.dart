@@ -44,7 +44,7 @@ class _SyncScreenState extends State<SyncScreen> {
             // Кнопка слева: отправляем текст веб-клиентам
             FloatingActionButton(
               heroTag: "leftFab",  // Уникальный tag
-              onPressed: context.read<SyncService>().sendToClients,
+              onPressed: context.read<SyncService>().sendToWeb,
               tooltip: 'Send',
               child: const Icon(Icons.content_copy),
             ),

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:collection';
 
 import 'package:local_text_sync/features/sync/server/sync_http_server.dart';
 import 'package:local_text_sync/features/sync/models/server_data_model.dart';
@@ -9,42 +10,61 @@ import 'package:local_text_sync/core/logging/logging_service.dart';
 import 'package:local_text_sync/features/sync/services/clipboard_service.dart';
 
 class SyncService {
+  // --- Внешние свойства
+
+  // Поток главного сервисного контроллера: через него идут все сообщения
+  Stream<SyncData> get dataStream => _controller.stream;
+
+  // Статус сервера
+  bool get isServerRunning => _server != null;
+  // Адрес сервера
+  String get address => _address;
+
+  // --- Геттеры очереди текстов сервера
+  // Размер очереди (сколько там текстов)
+  int get queueLength => _queueText.length;
+  // Возвращает первый текст и удаляет его из очереди
+  String? get consumeServerText {
+    if (_queueText.isNotEmpty) {
+      return _queueText.removeFirst();
+    } else {
+      return null;
+    }
+  }
+
+  // --- Параметры конструктора
   // Храним конфигурацию, переданную в параметре конструктора
   final Config _cfg;
-  // Сервис передали в параметре конструктора
+  // Сервис логгера — тоже передали в параметре конструктора
   final LoggingService _log;
+
+  // --- Внутренние свойства
 
   // Сервис буфер обмена
   final _clipb = ClipboardService();
 
-  // Серверный API
+  // --- Серверный API
   // Сервер может не запуститься, поэтому nullable
   SyncServer? _server;
   // Адрес от сервера
   String _address = '';
 
-  // Главный контроллер основного потока:
+  // Главный сервисный контроллер потока:
   // через него передаем данные от сервера и буфера обмена
   final _controller = StreamController<SyncData>.broadcast();
 
-  // Главный поток этого контроллера
-  Stream<SyncData> get dataStream => _controller.stream;
-
   // Слушатель сервера делаем nullable - непонятно, активируется ли сервер
   StreamSubscription<ServerData>? _serverSubscription;
-  // Слушателя буфера обмена активируем в конструкторе
+  // Слушатель буфера обмена активируем в конструкторе, поэтому late
   late StreamSubscription<String> _clipbSubscription;
 
   // Сюда кладем самый последний текст
   String _latestText = '';
+  // В очередь собираем все тексты от сервера — отдаем по запросу
+  final _queueText = Queue<String>();
   
-  // Показываем статус сервера наружу
-  bool get isServerRunning => _server != null;
-  // Показываем адрес
-  String get address => _address;
-
   // Конструктор
-  // Параметром передаем конфиг
+  // Параметром передаем конфиг и логгер
   SyncService(this._cfg, this._log) {
     _clipbSubscription = _clipb.stream.listen(_onClipboard);
     LoggingService.prefix = 'SyncService';
@@ -88,6 +108,31 @@ class SyncService {
     _emit(_address, DataSource.serverInfo);
   }
 
+  // --- Для UI
+  Future<void> pasteFromClipboard() async {
+    await _clipb.pasteText();
+  }
+
+  Future<void> sendToWeb() async {
+    _sendToWebClients(_latestText);
+  }
+
+  // Останавливаем поток, сервис буфера обмена и сервер
+  Future<void> dispose() async {
+    await _clipbSubscription.cancel();
+    await _serverSubscription?.cancel();
+
+    // Чтобы застолбить nullable свойство и избежать _server!
+    final server = _server;
+    if (server != null) {
+      await server.stop();
+      _server = null;
+    }
+
+    await _controller.close();
+    _clipb.dispose();
+  }
+
   /// Рассылка текста по всем подключенным websocket-клиентам
   void _sendToWebClients(String payload) {
     // Приземляем _server, чтобы сделать non-nullable
@@ -113,18 +158,10 @@ class SyncService {
 
   // Сюда приходят данные из серверного потока
   void _onServer(ServerData dataFromServer) {
-    _log.d('_onServer: Data from server: ${dataFromServer.text}');
+    _log.d('_onServer: Data from server: ${dataFromServer.text.length} bytes.');
+    _queueText.add(dataFromServer.text);
     _latestText = dataFromServer.text;
     _emit(dataFromServer.text, DataSource.server);
-  }
-
-  // ------- Для UI
-  Future<void> pasteFromClipboard() async {
-    await _clipb.pasteText();
-  }
-
-  Future<void> sendToClients() async {
-    _sendToWebClients(_latestText);
   }
 
   void _emit(String text, DataSource source) {
@@ -134,21 +171,5 @@ class SyncService {
         source: source,
       )
     );
-  }
-
-  // Останавливаем поток, сервис буфера обмена и сервер
-  Future<void> dispose() async {
-    await _clipbSubscription.cancel();
-    await _serverSubscription?.cancel();
-
-    // Чтобы застолбить nullable свойство и избежать _server!
-    final server = _server;
-    if (server != null) {
-      await server.stop();
-      _server = null;
-    }
-
-    await _controller.close();
-    _clipb.dispose();
   }
 }
