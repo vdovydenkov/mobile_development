@@ -15,45 +15,93 @@ class SyncScreen extends StatefulWidget {
 class _SyncScreenState extends State<SyncScreen> {
   static const _tooltip = 'СИНХРОНИЗИРОВАННЫЙ ТЕКСТ';
 
+  late final TextEditingController _textController;
+
+  @override
+  void initState() {
+    super.initState();
+    _textController = TextEditingController();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final latestText = context.watch<SyncState>().latestText;
+
+    if (_textController.text != latestText) {
+      _textController.text = latestText;
+      _textController.selection = TextSelection.fromPosition(
+        TextPosition(offset: _textController.text.length),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final syncService = context.read<SyncService>();
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: Text(screenTitle),
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(_tooltip),
-            Text(
-              // Вынимаем из провайдера слой state
-              context.watch<SyncState>().latestText,
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-          ],
-        ),
+        title: const Text(screenTitle),
       ),
 
-      floatingActionButton: Padding(
-        padding: const EdgeInsets.all(8.0),  // Отступы от краёв экрана
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,  // Слева и справа
+      body: SafeArea(
+        child: Column(
           children: [
-            // Кнопка слева: отправляем текст веб-клиентам
-            FloatingActionButton(
-              heroTag: "leftFab",  // Уникальный tag
-              onPressed: context.read<SyncService>().sendToWeb,
-              tooltip: 'Send',
-              child: const Icon(Icons.content_copy),
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text(_tooltip),
             ),
-            // Основная кнопка справа (Paste)
-            FloatingActionButton(
-              heroTag: "rightFab",  // Уникальный tag
-              onPressed: context.read<SyncService>().pasteFromClipboard,
-              tooltip: 'Paste',
-              child: const Icon(Icons.add),
+
+            // Основное редактируемое текстовое поле
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: TextField(
+                  controller: _textController,
+                  expands: true,
+                  maxLines: null,
+                  minLines: null,
+                  textAlignVertical: TextAlignVertical.top,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+              ),
+            ),
+
+            // Кнопки "Отправить" и "Принять"
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+              child: Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        syncService.onSendPressed(_textController.text);
+                      },
+                      child: const Text('Отправить'),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: syncService.onRetrievePressed,
+                      child: const Text('Принять'),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -71,13 +119,9 @@ class _SyncScreenState extends State<SyncScreen> {
               context.watch<SyncState>().status,
               style: const TextStyle(fontSize: 14),
             ),
-            Row(
-              children: [
-                Text(
-                  context.watch<SyncState>().serverInfo,
-                  style: const TextStyle(fontSize: 14),
-                ),
-              ],
+            Text(
+              context.watch<SyncState>().serverInfo,
+              style: const TextStyle(fontSize: 14),
             ),
           ],
         ),
