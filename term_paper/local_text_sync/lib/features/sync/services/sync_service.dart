@@ -71,7 +71,7 @@ class SyncService {
     } catch (e, st) {
       _log.f('Server start error: ${e.toString()}\n$st');
       // Отправляем текст ошибки в UI
-      _emit('Ошибка сервера: ${e.toString()}', DataSource.serverInfo);
+      _emit('Ошибка сервера: ${e.toString()}', DataSource.statusInfo);
       return;
     }
 
@@ -80,7 +80,7 @@ class SyncService {
     // Сервер не запустился
     if (server == null) {
       _log.f('Something wrong: the server has not been activated. Send info to UI.');
-      _emit('Сервер не запущен.', DataSource.serverInfo);
+      _emit('Сервер не запущен.', DataSource.statusInfo);
       return;
     }
 
@@ -90,7 +90,7 @@ class SyncService {
     _log.i('Server is activated on address: $_address');
 
     // Отправляем адрес в SyncState
-    _emit(_address, DataSource.serverInfo);
+    _emit(_address, DataSource.statusInfo);
   }
 
   // --- Для UI
@@ -108,6 +108,9 @@ class SyncService {
       _queueText.removeFirst(),
       DataSource.server,
     );
+
+    // Отправляем актуальную информацию о количестве текстов в очереди
+    _emitActualQueueLength();
   }
 
   /// Останавливаем поток и сервер
@@ -144,8 +147,10 @@ class SyncService {
 
   // Сюда приходят данные из серверного потока
   void _onServer(ServerData dataFromServer) {
-    _log.d('_onServer: Data from server: ${dataFromServer.text.length} bytes.');
+    _log.d('_onServer: Data from server: ${dataFromServer.text.length} bytes.\n');
     _queueText.add(dataFromServer.text);
+    // Отправляем актуальную информацию о количестве текстов в очереди
+    _emitActualQueueLength();
   }
 
   void _emit(String text, DataSource source) {
@@ -155,5 +160,18 @@ class SyncService {
         source: source,
       )
     );
+  }
+
+  // Отправляем актуальную информацию о количестве текстов в очереди
+  void _emitActualQueueLength() {
+    if (_queueText.isEmpty) {
+      // Если очередь пустая — отправляем в поток пустую строку
+      _emit('', DataSource.queue);
+      return;
+    }
+    // Иначе отправляем количество элементов (текстов) в очереди
+    final queueLengthStr = _queueText.length.toString();
+    _emit(queueLengthStr, DataSource.queue);
+    _log.t('Queue length emitted to stream. Value: $queueLengthStr');
   }
 }
