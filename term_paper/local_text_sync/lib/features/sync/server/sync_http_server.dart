@@ -39,9 +39,6 @@ Future<SyncServer> startServer({
   Logger? externalLogger,
 }) async {
   final log = StringBuffer();
-  final host = InternetAddress.anyIPv4;
-
-  log.writeln('host: $host');
 
   final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4);
   log.writeln('--- Interfaces');
@@ -55,6 +52,9 @@ Future<SyncServer> startServer({
 
   final localIp = _chooseRealLocalIp(interfaces, log) ?? '0.0.0.0';
   log.writeln('localIp: $localIp');
+
+  final host = InternetAddress(localIp);
+  log.writeln('host: $host');
 
   // HTML-шаблон
   String htmlTemplate;
